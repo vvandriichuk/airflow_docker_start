@@ -1,0 +1,44 @@
+stages:
+  - build
+  - deploy
+  - cleanup
+
+
+build image:
+  stage: build
+  script:
+    - docker login --username $REGISTRY_LOGIN --password $REGISTRY_PASSWORD $REGISTRY_HOST
+    - docker build -t $REGISTRY_HOST/airflow/airflow:latest ./airflow
+    - docker push $REGISTRY_HOST/airflow/airflow:latest
+
+
+deploy to server:
+  stage: deploy
+  script:
+    - echo $DEPLOY_ENVIRONMENT
+#    - scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null docker-compose.yml $SSH_USER@$PROD_SERVER:$DOCKER_DIRECTORY
+    - ssh -o StrictHostKeyChecking=no $SSH_USER@$PROD_SERVER "cd $DOCKER_DIRECTORY &&
+        docker login --username $REGISTRY_LOGIN --password $REGISTRY_PASSWORD $REGISTRY_HOST &&
+        docker pull $REGISTRY_HOST/airflow/airflow:latest &&
+        docker logout &&
+        docker-compose down &&
+        docker-compose up -d &&
+        docker image prune -f"
+  only:
+    variables:
+      - $CI_COMMIT_REF_NAME == "main"
+
+
+cleanup:
+  stage: cleanup
+  script:
+    - docker container prune
+    - >  # remove old images except latest + 3
+      docker rmi $( \
+        docker images \
+        | tac \
+        | awk '/airflow/ && !/latest/ {x++; if (x>3) printf "%s:%s ", $1, $2}' \
+      )
+  only:
+    variables:
+      - $CI_COMMIT_REF_NAME == "main"
